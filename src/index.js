@@ -18,9 +18,24 @@ const app = express();
 
 // 确保日志目录存在
 if (config.logging.file) {
-    const logDir = path.dirname(config.logging.file);
-    if (!fs.existsSync(logDir)) {
-        fs.mkdirSync(logDir, { recursive: true });
+    try {
+        // 使用绝对路径确保在任何工作目录下都能正确解析
+        const logFilePath = path.isAbsolute(config.logging.file) 
+            ? config.logging.file 
+            : path.join(__dirname, '..', config.logging.file);
+        const logDir = path.dirname(logFilePath);
+        
+        if (!fs.existsSync(logDir)) {
+            fs.mkdirSync(logDir, { recursive: true });
+            logger('info', `Created log directory: ${logDir}`);
+        }
+        // 更新配置中的日志文件路径为绝对路径
+        config.logging.file = logFilePath;
+    } catch (error) {
+        // 记录错误但不中断应用运行
+        console.error(`Failed to create log directory: ${error.message}`);
+        // 禁用文件日志，但继续使用控制台日志
+        config.logging.file = null;
     }
 }
 
