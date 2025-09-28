@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>语音音色演示 - TTS API服务</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f8f9fa;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem 0;
+            margin-bottom: 2rem;
+        }
+        .voice-card {
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            cursor: pointer;
+            height: 100%;
+        }
+        .voice-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+        }
+        .voice-avatar {
+            width: 80px;
+            height: 80px;
+            object-fit: cover;
+            border-radius: 50%;
+            margin: 0 auto;
+            display: block;
+        }
+        .emotion-badge {
+            margin: 0 2px 4px 0;
+            cursor: pointer;
+        }
+        .emotion-badge:hover {
+            transform: scale(1.05);
+        }
+        .card-footer {
+            background-color: #f8f9fa;
+        }
+        .play-icon {
+            font-size: 2rem;
+            color: #667eea;
+            margin-top: 1rem;
+            cursor: pointer;
+        }
+        .play-icon:hover {
+            color: #764ba2;
+            transform: scale(1.1);
+        }
+        .spinner {
+            display: none;
+        }
+        .spinner.active {
+            display: block;
+        }
+        .playing {
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+            100% {
+                opacity: 1;
+            }
+        }
+        .filter-container {
+            background-color: white;
+            padding: 1.5rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            margin-bottom: 2rem;
+        }
+        .nav-tabs {
+            margin-bottom: 1rem;
+        }
+        .audio-player {
+            width: 100%;
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="header text-center">
+        <div class="container">
+            <h1 class="display-4">语音音色演示</h1>
+            <p class="lead">浏览并体验不同的TTS语音音色</p>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="filter-container">
+            <div class="mb-4">
+                <input type="text" id="search-input" class="form-control" placeholder="搜索音色名称...">
+            </div>
+            <div class="nav nav-tabs" id="voice-tabs" role="tablist">
+                <button class="nav-link active" id="all-tab" data-bs-toggle="tab" data-bs-target="#all-voices" type="button" role="tab" aria-controls="all-voices" aria-selected="true">全部音色</button>
+            </div>
+        </div>
+
+        <div class="tab-content" id="voice-tabs-content">
+            <div class="tab-pane fade show active" id="all-voices" role="tabpanel" aria-labelledby="all-tab">
+                <div class="row" id="voice-cards-container">
+                    <!-- 音色卡片将通过JavaScript动态生成 -->
+                </div>
+            </div>
+        </div>
+
+        <!-- 加载更多按钮 -->
+        <div class="text-center mt-4 mb-6" id="load-more-container">
+            <button id="load-more-btn" class="btn btn-primary" disabled>
+                <span class="spinner-border spinner-border-sm mr-2"></span>
+                加载中...
+            </button>
+        </div>
+    </div>
+
+    <footer class="bg-dark text-white py-4 mt-6">
+        <div class="container text-center">
+            <p>&copy; 2023 TTS API服务 - OpenAI兼容格式</p>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script>
+        // 全局变量
+        let voiceData = [];
+        let currentPage = 0;
+        const cardsPerPage = 12;
+        let filteredVoices = [];
+        let currentCategory = 'all';
+        let currentlyPlaying = null;
+
+        // 初始化函数
+        async function init() {
+            try {
+                // 加载语音数据
+                await loadVoiceData();
+                // 生成音色分类标签
+                generateVoiceCategories();
+                // 初始显示音色卡片
+                filteredVoices = voiceData;
+                renderVoiceCards();
+                // 添加搜索事件监听
+                document.getElementById('search-input').addEventListener('input', handleSearch);
+                // 添加加载更多事件监听
+                document.getElementById('load-more-btn').addEventListener('click', loadMoreCards);
+            } catch (error) {
+                console.error('初始化失败:', error);
+                showErrorMessage('加载音色数据失败，请刷新页面重试');
+            }
+        }
+
+        // 加载语音数据
+        async function loadVoiceData() {
+            try {
+                const response = await fetch('/api/voice-data');
+                if (!response.ok) {
+                    throw new Error('网络响应错误');
+                }
+                const data = await response.json();
+                voiceData = flattenVoiceData(data);
+                console.log('加载语音数据成功:', voiceData.length, '个音色');
+            } catch (error) {
+                console.error('加载语音数据失败:', error);
+                throw error;
+            }
+        }
+
+        // 展平语音数据
+        function flattenVoiceData(data) {
+            let flattened = [];
+            if (data.code === 0 && Array.isArray(data.data)) {
+                data.data.forEach(category => {
+                    if (Array.isArray(category.list)) {
+                        category.list.forEach(voice => {
+                            // 添加分类信息
+                            voice.category = category.classify;
+                            // 解析情感类型
+                            if (voice.feeling_type) {
+                                voice.emotions = voice.feeling_type.split(',').map(emotion => emotion.trim());
+                            } else {
+                                voice.emotions = [];
+                            }
+                            flattened.push(voice);
+                        });
+                    }
+                });
+            }
+            return flattened;
+        }
+
+        // 生成音色分类标签
+        function generateVoiceCategories() {
+            const tabsContainer = document.getElementById('voice-tabs');
+            const categories = new Set(voiceData.map(voice => voice.category));
+            
+            categories.forEach(category => {
+                if (category && category.trim()) {
+                    const tabId = `tab-${category.toLowerCase().replace(/\s+/g, '-')}`;
+                    const panelId = `panel-${category.toLowerCase().replace(/\s+/g, '-')}`;
+                    
+                    // 创建标签按钮
+                    const tabButton = document.createElement('button');
+                    tabButton.className = 'nav-link';
+                    tabButton.id = tabId;
+                    tabButton.setAttribute('data-bs-toggle', 'tab');
+                    tabButton.setAttribute('data-bs-target', `#${panelId}`);
+                    tabButton.type = 'button';
+                    tabButton.setAttribute('role', 'tab');
+                    tabButton.setAttribute('aria-controls', panelId);
+                    tabButton.setAttribute('aria-selected', 'false');
+                    tabButton.textContent = category;
+                    
+                    // 添加点击事件
+                    tabButton.addEventListener('click', () => {
+                        currentCategory = category;
+                        applyFilters();
+                    });
+                    
+                    tabsContainer.appendChild(tabButton);
+                    
+                    // 创建标签面板
+                    const tabContent = document.getElementById('voice-tabs-content');
+                    const panel = document.createElement('div');
+                    panel.className = 'tab-pane fade';
+                    panel.id = panelId;
+                    panel.setAttribute('role', 'tabpanel');
+                    panel.setAttribute('aria-labelledby', tabId);
+                    
+                    const row = document.createElement('div');
+                    row.className = 'row';
+                    row.id = `container-${panelId}`;
+                    
+                    panel.appendChild(row);
+                    tabContent.appendChild(panel);
+                }
+            });
+        }
+
+        // 处理搜索
+        function handleSearch(event) {
+            applyFilters();
+        }
+
+        // 应用过滤器
+        function applyFilters() {
+            const searchTerm = document.getElementById('search-input').value.toLowerCase().trim();
+            
+            filteredVoices = voiceData.filter(voice => {
+                // 搜索过滤
+                const matchesSearch = !searchTerm || 
+                    voice.names.toLowerCase().includes(searchTerm) ||
+                    voice.character.toLowerCase().includes(searchTerm) ||
+                    voice.scene_tag.toLowerCase().includes(searchTerm);
+                
+                // 分类过滤
+                const matchesCategory = currentCategory === 'all' || voice.category === currentCategory;
+                
+                return matchesSearch && matchesCategory;
+            });
+            
+            // 重置页码并重新渲染
+            currentPage = 0;
+            renderVoiceCards();
+        }
+
+        // 渲染音色卡片
+        function renderVoiceCards() {
+            const container = getCurrentContainer();
+            container.innerHTML = '';
+            
+            const startIndex = currentPage * cardsPerPage;
+            const endIndex = Math.min(startIndex + cardsPerPage, filteredVoices.length);
+            const voicesToRender = filteredVoices.slice(startIndex, endIndex);
+            
+            if (voicesToRender.length === 0) {
+                container.innerHTML = '<div class="col-12 text-center py-6"><p class="text-muted">没有找到匹配的音色</p></div>';
+                document.getElementById('load-more-btn').disabled = true;
+                document.getElementById('load-more-btn').innerHTML = '没有更多音色';
+                return;
+            }
+            
+            voicesToRender.forEach(voice => {
+                const card = createVoiceCard(voice);
+                container.appendChild(card);
+            });
+            
+            // 更新加载更多按钮状态
+            const loadMoreBtn = document.getElementById('load-more-btn');
+            if (endIndex >= filteredVoices.length) {
+                loadMoreBtn.disabled = true;
+                loadMoreBtn.innerHTML = '没有更多音色';
+            } else {
+                loadMoreBtn.disabled = false;
+                loadMoreBtn.innerHTML = '加载更多';
+            }
+        }
+
+        // 获取当前容器
+        function getCurrentContainer() {
+            if (currentCategory === 'all') {
+                return document.getElementById('voice-cards-container');
+            } else {
+                const panelId = `panel-${currentCategory.toLowerCase().replace(/\s+/g, '-')}`;
+                return document.getElementById(`container-${panelId}`);
+            }
+        }
+
+        // 创建音色卡片
+        function createVoiceCard(voice) {
+            const col = document.createElement('div');
+            col.className = 'col-md-4 col-lg-3 mb-4';
+            
+            const card = document.createElement('div');
+            card.className = 'voice-card card h-100';
+            card.setAttribute('data-voice-id', voice.id);
+            
+            // 卡片主体
+            const cardBody = document.createElement('div');
+            cardBody.className = 'card-body text-center';
+            
+            // 头像
+            const avatar = document.createElement('img');
+            avatar.src = voice.head_pic || 'https://via.placeholder.com/80';
+            avatar.alt = voice.names;
+            avatar.className = 'voice-avatar mb-3';
+            avatar.onerror = function() {
+                this.src = 'https://via.placeholder.com/80';
+            };
+            
+            // 名称
+            const name = document.createElement('h5');
+            name.className = 'card-title';
+            name.textContent = voice.names;
+            
+            // 特征
+            const character = document.createElement('p');
+            character.className = 'card-text text-muted';
+            character.textContent = voice.character;
+            
+            // 场景标签
+            const sceneTag = document.createElement('p');
+            sceneTag.className = 'card-text text-sm text-primary';
+            sceneTag.textContent = voice.scene_tag;
+            
+            // 情感标签容器
+            const emotionsContainer = document.createElement('div');
+            emotionsContainer.className = 'mt-2 d-flex flex-wrap justify-center';
+            
+            // 添加情感标签
+            if (voice.emotions && voice.emotions.length > 0) {
+                voice.emotions.forEach(emotion => {
+                    if (emotion && emotion !== 'nuetral' && emotion !== 'neutral') {
+                        const badge = document.createElement('span');
+                        badge.className = 'emotion-badge badge bg-secondary';
+                        badge.textContent = getEmotionName(emotion);
+                        badge.setAttribute('data-emotion', emotion);
+                        emotionsContainer.appendChild(badge);
+                    }
+                });
+            }
+            
+            // 播放图标
+            const playIcon = document.createElement('div');
+            playIcon.className = 'play-icon';
+            playIcon.innerHTML = '<i class="fa fa-play-circle"></i>';
+            playIcon.setAttribute('data-voice-id', voice.id);
+            playIcon.setAttribute('data-voice-name', voice.en_name);
+            
+            // 添加播放事件
+            playIcon.addEventListener('click', (e) => {
+                e.stopPropagation();
+                playVoice(voice);
+            });
+            
+            // 音频播放器（默认隐藏）
+            const audioPlayer = document.createElement('audio');
+            audioPlayer.className = 'audio-player';
+            audioPlayer.setAttribute('data-voice-id', voice.id);
+            audioPlayer.setAttribute('controls', 'controls');
+            audioPlayer.style.display = 'none';
+            
+            // 加载状态指示器
+            const loadingIndicator = document.createElement('div');
+            loadingIndicator.className = 'spinner text-center mt-2';
+            loadingIndicator.innerHTML = '<div class="spinner-border spinner-border-sm" role="status"><span class="sr-only">Loading...</span></div>';
+            
+            // 组装卡片
+            cardBody.appendChild(avatar);
+            cardBody.appendChild(name);
+            cardBody.appendChild(character);
+            cardBody.appendChild(sceneTag);
+            cardBody.appendChild(emotionsContainer);
+            cardBody.appendChild(playIcon);
+            cardBody.appendChild(audioPlayer);
+            cardBody.appendChild(loadingIndicator);
+            
+            card.appendChild(cardBody);
+            
+            // 卡片底部
+            const cardFooter = document.createElement('div');
+            cardFooter.className = 'card-footer text-center text-muted text-sm';
+            cardFooter.textContent = voice.supplier || '未知供应商';
+            
+            card.appendChild(cardFooter);
+            col.appendChild(card);
+            
+            return col;
+        }
+
+        // 播放语音
+        async function playVoice(voice) {
+            // 停止当前播放的语音
+            if (currentlyPlaying && currentlyPlaying !== voice.id) {
+                stopVoice(currentlyPlaying);
+            }
+            
+            const audioPlayer = document.querySelector(`audio[data-voice-id="${voice.id}"]`);
+            const playIcon = document.querySelector(`.play-icon[data-voice-id="${voice.id}"]`);
+            const loadingIndicator = document.querySelector(`.spinner[data-voice-id="${voice.id}"]`);
+            
+            // 如果已经有音频源且处于暂停状态，则继续播放
+            if (audioPlayer.src && !audioPlayer.paused) {
+                audioPlayer.pause();
+                playIcon.innerHTML = '<i class="fa fa-play-circle"></i>';
+                playIcon.classList.remove('playing');
+                currentlyPlaying = null;
+                return;
+            }
+            
+            try {
+                // 显示加载状态
+                playIcon.style.display = 'none';
+                if (loadingIndicator) loadingIndicator.classList.add('active');
+                
+                // 如果还没有音频源，则生成
+                if (!audioPlayer.src) {
+                    const sampleText = '欢迎使用语音合成服务，这是一段测试语音，您可以在下方听到我的声音特点。';
+                    const voiceId = voice.en_name;
+                    
+                    // 调用TTS API生成音频
+                    const audioUrl = await generateTTSAudio(sampleText, voiceId);
+                    audioPlayer.src = audioUrl;
+                    audioPlayer.style.display = 'block';
+                }
+                
+                // 播放音频
+                audioPlayer.play();
+                playIcon.innerHTML = '<i class="fa fa-pause-circle"></i>';
+                playIcon.classList.add('playing');
+                currentlyPlaying = voice.id;
+                
+                // 监听播放结束事件
+                audioPlayer.onended = function() {
+                    playIcon.innerHTML = '<i class="fa fa-play-circle"></i>';
+                    playIcon.classList.remove('playing');
+                    currentlyPlaying = null;
+                };
+            } catch (error) {
+                console.error('播放语音失败:', error);
+                showErrorMessage('生成语音失败，请稍后重试');
+            } finally {
+                // 隐藏加载状态
+                playIcon.style.display = 'block';
+                if (loadingIndicator) loadingIndicator.classList.remove('active');
+            }
+        }
+
+        // 停止语音播放
+        function stopVoice(voiceId) {
+            const audioPlayer = document.querySelector(`audio[data-voice-id="${voiceId}"]`);
+            const playIcon = document.querySelector(`.play-icon[data-voice-id="${voiceId}"]`);
+            
+            if (audioPlayer && !audioPlayer.paused) {
+                audioPlayer.pause();
+            }
+            
+            if (playIcon) {
+                playIcon.innerHTML = '<i class="fa fa-play-circle"></i>';
+                playIcon.classList.remove('playing');
+            }
+        }
+
+        // 生成TTS音频
+        async function generateTTSAudio(text, voiceId) {
+            try {
+                // 使用Base64编码避免URL长度限制
+                const encodedText = btoa(encodeURIComponent(text));
+                // 创建一个临时URL用于演示
+                // 在实际应用中，这里应该调用TTS API
+                return `/api/generate-tts?text=${encodedText}&voice=${voiceId}`;
+            } catch (error) {
+                console.error('生成TTS音频失败:', error);
+                throw error;
+            }
+        }
+
+        // 获取情感名称
+        function getEmotionName(emotion) {
+            const emotionMap = {
+                'happy': '开心',
+                'sad': '悲伤',
+                'angry': '愤怒',
+                'fear': '恐惧',
+                'surprise': '惊讶',
+                'hate': '厌恶',
+                'arousal': '兴奋',
+                'nuetral': '中性',
+                'neutral': '中性'
+            };
+            
+            return emotionMap[emotion] || emotion;
+        }
+
+        // 加载更多卡片
+        function loadMoreCards() {
+            currentPage++;
+            renderVoiceCards();
+        }
+
+        // 显示错误消息
+        function showErrorMessage(message) {
+            const container = document.querySelector('.container');
+            const errorAlert = document.createElement('div');
+            errorAlert.className = 'alert alert-danger alert-dismissible fade show';
+            errorAlert.role = 'alert';
+            errorAlert.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            `;
+            
+            container.insertBefore(errorAlert, container.firstChild);
+            
+            // 3秒后自动关闭
+            setTimeout(() => {
+                errorAlert.classList.remove('show');
+                errorAlert.classList.add('fade');
+                setTimeout(() => {
+                    errorAlert.remove();
+                }, 500);
+            }, 3000);
+        }
+
+        // 当页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
