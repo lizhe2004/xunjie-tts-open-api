@@ -124,97 +124,68 @@ app.get('/health', (req, res) => {
     });
 });
 
-// OpenAI兼容格式的TTS API端点
-app.post('/v1/audio/speech', async (req, res) => {
+// 创建一个通用的TTS生成函数来处理核心逻辑
+async function generateTTS({ text, voice, speed = 1.0, emotion, format = 'mp3', isDemo = false, requestId = null }) {
     try {
-        // 验证请求参数
-        const { model, input, voice, response_format = 'mp3', speed = 1.0, emotion } = req.body;
-        
-        if (!model || !input || !voice) {
-            logger('warn', `Missing required parameters: ${!model ? 'model' : ''} ${!input ? 'input' : ''} ${!voice ? 'voice' : ''}`);
-            return res.status(400).json({
-                error: {
-                    message: "Missing required parameters: model, input, or voice",
-                    type: "invalid_request_error",
-                    param: null,
-                    code: null
-                }
-            });
-        }
-
-        // 限制输入文本长度
-        if (input.length > 4096) {
-            logger('warn', `Input text too long: ${input.length} characters`);
-            return res.status(400).json({
-                error: {
-                    message: "Input text too long. Maximum length is 4096 characters.",
-                    type: "invalid_request_error",
-                    param: "input",
-                    code: "text_too_long"
-                }
-            });
-        }
-
         // 日志记录请求参数
         if (config.logging.level === 'debug') {
-            logger('debug', `TTS Request: model=${model}, voice=${voice}, speed=${speed}, response_format=${response_format}, emotion=${emotion || 'none'}, input_length=${input.length}`);
+            const prefix = isDemo ? 'Demo ' : '';
+            logger('debug', `${prefix}TTS Request: voice=${voice}, speed=${speed}, emotion=${emotion || 'none'}, input_length=${text.length}`);
         }
 
         // 检查缓存（如果启用）
         let cachedAudio = null;
         if (config.cache.enabled) {
-            const cacheKey = `${model}_${voice}_${response_format}_${speed}_${emotion || 'none'}_${input.substring(0, 100)}`;
+            const prefix = isDemo ? 'demo_' : '';
+            const cacheKey = `${prefix}${voice}_${speed}_${emotion || 'none'}_${format}_${text.substring(0, 100)}`;
             cachedAudio = getFromCache(cacheKey);
             if (cachedAudio) {
-                logger('info', 'Cache hit for TTS request');
-                
-                // 设置响应头
-                res.set({
-                    'Content-Type': formatMapping[response_format] || 'audio/mpeg',
-                    'Content-Disposition': `attachment; filename="speech.${response_format}"`,
-                    'X-Processed-By': 'OpenAI-Compat-TTS-API',
-                    'X-Cache': 'HIT'
-                });
-                
-                return res.send(cachedAudio);
+                const prefix = isDemo ? 'Demo ' : '';
+                logger('info', `Cache hit for ${prefix}TTS request`);
+                return {
+                    audioData: cachedAudio,
+                    format,
+                    isCached: true
+                };
             }
         }
 
         // 转换为目标TTS API的请求格式
         const hudunsoftConfig = config.targetApi.hudunsoft;
         
-        // 将OpenAI的speed转换为hudunsoft的speech_rate (OpenAI: 0.25-4.0, hudunsoft: 1-10)
-        const speechRate = Math.round((speed - 0.25) / 3.75 * 9) + 1; // 线性映射到1-10范围
-        
+        // 将speed转换为speech_rate (0.25-4.0 映射到 1-10)
+        const speechRate = Math.round((parseFloat(speed) - 0.25) / 3.75 * 9) + 1;
+
         // 准备表单数据
         const formData = new URLSearchParams();
         formData.append('client', hudunsoftConfig.client);
         formData.append('source', hudunsoftConfig.source);
         formData.append('soft_version', hudunsoftConfig.softVersion);
         formData.append('device_id', hudunsoftConfig.deviceId);
-        formData.append('text', input);
+        formData.append('text', text);
         formData.append('bgid', hudunsoftConfig.bgId);
         formData.append('bg_volume', hudunsoftConfig.bgVolume);
-        formData.append('format', "mp3");
-        formData.append('voice', voiceMapping[voice] || voice); // 默认使用ruoxi语音
+        formData.append('format', 'mp3');
+        formData.append('voice', voiceMapping[voice] || voice); // 使用映射的语音ID或原始语音ID
         if (emotion) {
             formData.append('emotion', emotion);
         }
         formData.append('volume', hudunsoftConfig.volume);
         formData.append('speech_rate', speechRate.toString());
         formData.append('pitch_rate', hudunsoftConfig.pitchRate);
-        formData.append('title', input.substring(0, 50) + (input.length > 50 ? '...' : ''));
+        formData.append('title', text.substring(0, 50) + (text.length > 50 ? '...' : ''));
         formData.append('token', hudunsoftConfig.token);
         formData.append('bg_url', hudunsoftConfig.bgUrl);
 
         // 调用目标TTS API（带重试机制）
         let response;
         let retryCount = 0;
+        const startTime = Date.now();
         
-        logger('debug', `Calling TTS API with parameters: text=${input.substring(0, 20)}..., voice=${voice}, speed=${speed}, emotion=${emotion || 'none'}, response_format=${response_format}`);
+        logger('debug', `Calling TTS API with parameters: text=${text.substring(0, 20)}..., voice=${voice}, speed=${speed}, emotion=${emotion || 'none'}, format=${format}`);
         logger('debug', `Calling TTS API with parameters: formData=${formData.toString()}`);
         
-        let headers= {
+        let headers = {
             'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
             'user-agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
             'x-credits': config.targetApi.apiKey,
@@ -223,9 +194,8 @@ app.post('/v1/audio/speech', async (req, res) => {
             'x-version': hudunsoftConfig.xVersion,
             'accept': 'application/json, text/javascript, */*; q=0.01',
             ...(config.auth.apiKey && { 'X-API-Key': config.auth.apiKey })
-        }
-        
-        logger('debug', `Calling TTS API with headers: ${JSON.stringify(headers)}`);
+        };
+
         while (retryCount <= config.targetApi.retryCount) {
             try {
                 response = await axiosInstance.post(config.targetApi.url, formData.toString(), {
@@ -281,7 +251,7 @@ app.post('/v1/audio/speech', async (req, res) => {
             }
             
             // 如果请求的格式是AMR，且原始返回的音频不是AMR格式，需要进行格式转换
-            if (response_format === 'amr') {
+            if (format === 'amr') {
                 logger('info', 'Requesting AMR format, checking if conversion is needed');
                 
                 // 检查URL中的文件扩展名，判断是否需要转换
@@ -313,20 +283,78 @@ app.post('/v1/audio/speech', async (req, res) => {
 
         // 存入缓存（如果启用）
         if (config.cache.enabled) {
-            const cacheKey = `${model}_${voice}_${response_format}_${speed}_${emotion || 'none'}_${input.substring(0, 100)}`;
+            const prefix = isDemo ? 'demo_' : '';
+            const cacheKey = `${prefix}${voice}_${speed}_${emotion || 'none'}_${format}_${text.substring(0, 100)}`;
             addToCache(cacheKey, audioData);
         }
+
+        // 记录响应时间
+        const responseTime = Date.now() - startTime;
+        logger('info', `${isDemo ? 'Demo ' : ''}TTS API调用成功，响应时间: ${responseTime}ms，音色: ${voice}`);
+
+        return {
+            audioData,
+            format,
+            isCached: false
+        };
+    } catch (error) {
+        logger('error', `${isDemo ? 'Demo ' : ''}TTS API Error: ${error.message}`);
+        logger('debug', `Error details: ${error.response ? JSON.stringify(error.response.data) : JSON.stringify(error)}`);
+        throw error;
+    }
+}
+
+// OpenAI兼容格式的TTS API端点
+app.post('/v1/audio/speech', async (req, res) => {
+    try {
+        // 验证请求参数
+        const { model, input, voice, response_format = 'mp3', speed = 1.0, emotion } = req.body;
+        
+        if (!model || !input || !voice) {
+            logger('warn', `Missing required parameters: ${!model ? 'model' : ''} ${!input ? 'input' : ''} ${!voice ? 'voice' : ''}`);
+            return res.status(400).json({
+                error: {
+                    message: "Missing required parameters: model, input, or voice",
+                    type: "invalid_request_error",
+                    param: null,
+                    code: null
+                }
+            });
+        }
+
+        // 限制输入文本长度
+        if (input.length > 4096) {
+            logger('warn', `Input text too long: ${input.length} characters`);
+            return res.status(400).json({
+                error: {
+                    message: "Input text too long. Maximum length is 4096 characters.",
+                    type: "invalid_request_error",
+                    param: "input",
+                    code: "text_too_long"
+                }
+            });
+        }
+
+        // 调用通用TTS生成函数
+        const result = await generateTTS({
+            text: input,
+            voice,
+            speed,
+            emotion,
+            format: response_format,
+            isDemo: false
+        });
 
         // 设置响应头
         res.set({
             'Content-Type': formatMapping[response_format] || 'audio/mpeg',
             'Content-Disposition': `attachment; filename="speech.${response_format}"`,
             'X-Processed-By': 'OpenAI-Compat-TTS-API',
-            'X-Cache': 'MISS'
+            'X-Cache': result.isCached ? 'HIT' : 'MISS'
         });
 
         // 发送音频数据
-        res.send(audioData);
+        res.send(result.audioData);
 
     } catch (error) {
         logger('error', `TTS API Error: ${error.message}`);
@@ -387,7 +415,7 @@ app.get('/api/voice-data', (req, res) => {
 // 添加生成TTS音频的路由
 app.get('/api/generate-tts', async (req, res) => {
     try {
-        const { text, voice, speed = 1.0, emotion, format = 'mp3' } = req.query;
+        const { text, voice, speed = 1.0, emotion, response_format = 'mp3' } = req.query;
         
         if (!text || !voice) {
             logger('warn', `Missing required parameters: ${!text ? 'text' : ''} ${!voice ? 'voice' : ''}`);
@@ -410,192 +438,25 @@ app.get('/api/generate-tts', async (req, res) => {
                 data: null
             });
         }
-        
-        // 日志记录请求参数
-        if (config.logging.level === 'debug') {
-            logger('debug', `Demo TTS Request: voice=${voice}, speed=${speed}, emotion=${emotion || 'none'}, input_length=${decodedText.length}`);
-        }
-        
-        // 检查缓存（如果启用）
-        let cachedAudio = null;
-        if (config.cache.enabled) {
-            const cacheKey = `demo_${voice}_${speed}_${emotion || 'none'}_${format}_${decodedText.substring(0, 100)}`;
-            cachedAudio = getFromCache(cacheKey);
-            if (cachedAudio) {
-                logger('info', 'Cache hit for demo TTS request');
-                
-                // 设置响应头
-                res.set({
-                    'Content-Type': format === 'amr' ? 'audio/amr' : 'audio/mpeg',
-                    'X-Processed-By': 'OpenAI-Compat-TTS-API',
-                    'X-Cache': 'HIT'
-                });
-                
-                return res.send(cachedAudio);
-            }
-        }
-        
-        // 转换为目标TTS API的请求格式
-        const hudunsoftConfig = config.targetApi.hudunsoft;
-        
-        // 将speed转换为speech_rate (0.25-4.0 映射到 1-10)
-        const speechRate = Math.round((parseFloat(speed) - 0.25) / 3.75 * 9) + 1;
-        
-        // 准备表单数据
-        const formData = new URLSearchParams();
-        formData.append('client', hudunsoftConfig.client);
-        formData.append('source', hudunsoftConfig.source);
-        formData.append('soft_version', hudunsoftConfig.softVersion);
-        formData.append('device_id', hudunsoftConfig.deviceId);
-        formData.append('text', decodedText);
-        formData.append('bgid', hudunsoftConfig.bgId);
-        formData.append('bg_volume', hudunsoftConfig.bgVolume);
-        formData.append('format', 'mp3');
-        formData.append('voice', voiceMapping[voice] || voice); // 使用映射的语音ID或原始语音ID
-        if (emotion) {
-            formData.append('emotion', emotion);
-        }
-        formData.append('volume', hudunsoftConfig.volume);
-        formData.append('speech_rate', speechRate.toString());
-        formData.append('pitch_rate', hudunsoftConfig.pitchRate);
-        formData.append('title', decodedText.substring(0, 50) + (decodedText.length > 50 ? '...' : ''));
-        formData.append('token', hudunsoftConfig.token);
-        formData.append('bg_url', hudunsoftConfig.bgUrl);
-        
-        // 调用目标TTS API（带重试机制）
-        let response;
-        let retryCount = 0;
-        const startTime = Date.now();
-        
-        logger('debug', `Calling TTS API with parameters: text=${decodedText.substring(0, 20)}..., voice=${voice}, speed=${speed}, emotion=${emotion || 'none'}`);
-        logger('debug', `Calling TTS API with parameters: formData=${formData.toString()}`);
-        
-        let headers = {
-            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-            'user-agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
-            'x-credits': config.targetApi.apiKey,
-            'x-domain': hudunsoftConfig.xDomain,
-            'x-product': hudunsoftConfig.xProduct,
-            'x-version': hudunsoftConfig.xVersion,
-            'accept': 'application/json, text/javascript, */*; q=0.01',
-            ...(config.auth.apiKey && { 'X-API-Key': config.auth.apiKey })
-        };
-        
-        // 使用项目中的认证逻辑
-        if (config.auth.enabled && config.auth.apiKey) {
-            const authHeader = req.headers.authorization;
-            const apiKey = authHeader && authHeader.split(' ')[1];
-            
-            if (!apiKey || apiKey !== config.auth.apiKey) {
-                logger('warn', `Unauthorized request: Invalid API key from ${req.ip}`);
-                return res.status(401).json({
-                    code: 401,
-                    message: 'Invalid authentication credentials',
-                    data: null
-                });
-            }
-        }
-        
-        while (retryCount <= config.targetApi.retryCount) {
-            try {
-                response = await axiosInstance.post(config.targetApi.url, formData.toString(), {
-                    headers: headers,
-                    responseType: 'json' // 先以JSON格式接收响应
-                });
-                break; // 成功获取响应后跳出循环
-            } catch (err) {
-                retryCount++;
-                
-                logger('debug', `API request failed: ${JSON.stringify(err.response?.data || err.message)}`);
-                
-                if (retryCount > config.targetApi.retryCount || err.response?.status === 400 || err.response?.status === 401) {
-                    // 如果超过重试次数或者是400/401错误，不再重试
-                    throw err;
-                }
-                
-                logger('warn', `Request failed, retrying (${retryCount}/${config.targetApi.retryCount})... Error: ${err.message}`);
-                // 指数退避
-                await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount - 1)));
-            }
-        }
-        
-        // 处理API响应，获取音频数据
-        let audioData;
-        try {
-            // 检查API响应
-            logger('debug', `API response: ${JSON.stringify(response.data)}`);
-            
-            if (response.data.code === 0) {
-                // 直接返回了音频URL
-                const audioUrl = response.data.data.file_link;
-                logger('info', `Received audio file URL directly: ${audioUrl}`);
-                
-                // 下载音频文件
-                let audioResponse = await downloadAudioFile(audioUrl);
-                audioData = Buffer.from(audioResponse.data);
-                logger('info', `TTS request completed successfully, audio size: ${Math.round(audioData.length / 1024)}KB`);
-            } else if (response.data.code === '2105' && response.data.data && response.data.data.task_id) {
-                // 需要轮询任务状态
-                const taskId = response.data.data.task_id;
-                logger('info', `Received task ID for polling: ${taskId}`);
-                
-                // 轮询任务状态直到完成
-                const audioUrl = await pollTaskStatus(taskId, hudunsoftConfig);
-                
-                // 下载音频文件
-                let audioResponse = await downloadAudioFile(audioUrl);
-                audioData = Buffer.from(audioResponse.data);
-                logger('info', `TTS request completed successfully after polling, audio size: ${Math.round(audioData.length / 1024)}KB`);
-            } else {
-                throw new Error(`Target TTS API returned error: ${response.data.message || 'Unknown error'} - Response data: ${JSON.stringify(response.data)}`);
-            }
-            
-            // 如果请求的格式是AMR，且原始返回的音频不是AMR格式，需要进行格式转换
-            if (response_format === 'amr') {
-                logger('info', 'Requesting AMR format, checking if conversion is needed');
-                
-                // 检查URL中的文件扩展名，判断是否需要转换
-                let needConversion = true;
-                if (response.data.data && response.data.data.file_link) {
-                    const fileExtension = path.extname(response.data.data.file_link).toLowerCase().replace('.', '');
-                    needConversion = fileExtension !== 'amr';
-                }
-                
-                if (needConversion) {
-                    logger('info', 'AMR conversion needed, performing audio format conversion');
-                    try {
-                        audioData = await convertAudioFormat(audioData, 'amr');
-                        logger('info', `Successfully converted audio to AMR format, new size: ${Math.round(audioData.length / 1024)}KB`);
-                    } catch (conversionError) {
-                        logger('error', `Failed to convert audio to AMR format: ${conversionError.message}`);
-                        // 转换失败时，仍然返回原始音频数据
-                    }
-                } else {
-                    logger('debug', 'Audio is already in AMR format, no conversion needed');
-                }
-            }
-        } catch (err) {
-            logger('error', `Error processing TTS response: ${err.message}`);
-            throw err;
-        }
-        
-        // 存入缓存（如果启用）
-        if (config.cache.enabled) {
-            const cacheKey = `demo_${voice}_${speed}_${emotion || 'none'}_${decodedText.substring(0, 100)}`;
-            addToCache(cacheKey, audioData);
-        }
-        
-        // 记录响应时间
-        const responseTime = Date.now() - startTime;
-        logger('info', `TTS API调用成功，响应时间: ${responseTime}ms，音色: ${voice}`);
-        
+
+        // 调用通用TTS生成函数
+        const result = await generateTTS({
+            text: decodedText,
+            voice,
+            speed,
+            emotion,
+            format: response_format,
+            isDemo: true
+        });
+
         // 设置响应头并返回音频数据
         res.set({
-            'Content-Type': format === 'amr' ? 'audio/amr' : 'audio/mpeg',
+            'Content-Type': formatMapping[response_format] || 'audio/mpeg',
+            'Content-Disposition': `attachment; filename="speech.${response_format}"`,
             'X-Processed-By': 'OpenAI-Compat-TTS-API',
-            'X-Cache': 'MISS'
+            'X-Cache': result.isCached ? 'HIT' : 'MISS'
         });
-        res.send(audioData);
+        res.send(result.audioData);
     } catch (error) {
         logger('error', `Demo TTS API Error: ${error.message}`);
         logger('debug', `Error details: ${error.response ? JSON.stringify(error.response.data) : JSON.stringify(error)}`);
