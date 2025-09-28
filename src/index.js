@@ -169,7 +169,18 @@ async function generateTTS({ text, voice, speed = 1.0, emotion, format = 'mp3', 
         const hudunsoftConfig = config.targetApi.hudunsoft;
         
         // 将speed转换为speech_rate (0.25-4.0 映射到 1-10)
-        const speechRate = Math.round((parseFloat(speed) - 0.25) / 3.75 * 9) + 1;
+        
+        var speechRate = Math.round((parseFloat(speed) - 1) / 3 * 6) + 4;
+        if (speed<=0.3)
+            speechRate=1
+        else if ( speed<0.5)
+            speechRate=2
+        else  if ( speed<0.8)
+            speechRate=3
+        else if (speed>=0.8 && speed<1.2)
+            speechRate = 4;
+      else if (speed>=1.2 && speed<1.5)
+            speechRate = 5;
 
         // 准备表单数据
         const formData = new URLSearchParams();
@@ -598,9 +609,10 @@ async function convertAudioFormat(audioBuffer, targetFormat) {
         try {
             logger('debug', `Converting audio to ${targetFormat} format`);
             
-            // 创建临时文件路径
-            const tempInputPath = path.join(__dirname, `temp_${Date.now()}_input.wav`);
-            const tempOutputPath = path.join(__dirname, `temp_${Date.now()}_output.${targetFormat}`);
+            // 使用系统临时目录，适用于各种环境（包括只读文件系统）
+            const tempDir = process.env.TMPDIR || process.env.TEMP || process.env.TMP || '/tmp';
+            const tempInputPath = path.join(tempDir, `temp_${Date.now()}_input.wav`);
+            const tempOutputPath = path.join(tempDir, `temp_${Date.now()}_output.${targetFormat}`);
             
             // 写入临时输入文件
             fs.writeFileSync(tempInputPath, audioBuffer);
@@ -618,8 +630,13 @@ async function convertAudioFormat(audioBuffer, targetFormat) {
                         const convertedBuffer = fs.readFileSync(tempOutputPath);
                         
                         // 删除临时文件
-                        fs.unlinkSync(tempInputPath);
-                        fs.unlinkSync(tempOutputPath);
+                        try {
+                            if (fs.existsSync(tempInputPath)) fs.unlinkSync(tempInputPath);
+                            if (fs.existsSync(tempOutputPath)) fs.unlinkSync(tempOutputPath);
+                        } catch (cleanupErr) {
+                            logger('debug', `Failed to clean up temporary files: ${cleanupErr.message}`);
+                            // 清理失败不应影响主流程
+                        }
                         
                         logger('debug', `Successfully converted audio to ${targetFormat} format, size: ${Math.round(convertedBuffer.length / 1024)}KB`);
                         resolve(convertedBuffer);
