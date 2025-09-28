@@ -302,6 +302,33 @@ async function generateTTS({ text, voice, speed = 1.0, emotion, format = 'mp3', 
                     logger('debug', 'Audio is already in AMR format, no conversion needed');
                 }
             }
+            
+            // 如果请求的格式是OPUS，且原始返回的音频不是OPUS格式，需要进行格式转换
+            if (format === 'opus') {
+                logger('info', 'Requesting OPUS format, checking if conversion is needed');
+                
+                // 检查URL中的文件扩展名，判断是否需要转换
+                let needConversion = true;
+                if (response.data.data && response.data.data.file_link) {
+                    // 移除URL中的查询参数后再获取文件扩展名
+                    const urlWithoutQuery = response.data.data.file_link.split('?')[0];
+                    const fileExtension = path.extname(urlWithoutQuery).toLowerCase().replace('.', '');
+                    needConversion = fileExtension !== 'opus';
+                }
+                
+                if (needConversion) {
+                    logger('info', 'OPUS conversion needed, performing audio format conversion');
+                    try {
+                        audioData = await convertAudioFormat(audioData, 'opus');
+                        logger('info', `Successfully converted audio to OPUS format, new size: ${Math.round(audioData.length / 1024)}KB`);
+                    } catch (conversionError) {
+                        logger('error', `Failed to convert audio to OPUS format: ${conversionError.message}`);
+                        // 转换失败时，仍然返回原始音频数据
+                    }
+                } else {
+                    logger('debug', 'Audio is already in OPUS format, no conversion needed');
+                }
+            }
         } catch (err) {
             logger('error', `Error processing TTS response: ${err.message}`);
             throw err;
@@ -618,12 +645,25 @@ async function convertAudioFormat(audioBuffer, targetFormat) {
             fs.writeFileSync(tempInputPath, audioBuffer);
             
             // 使用ffmpeg进行格式转换
-            ffmpeg(tempInputPath)
-                .toFormat(targetFormat)
+            const ffmpegCommand = ffmpeg(tempInputPath).toFormat(targetFormat);
+            
+            // 根据目标格式设置特定的编码参数
+            if (targetFormat === 'amr') {
                 // AMR格式特定配置
-                .audioBitrate('12.2k')
-                .audioChannels(1)
-                .audioFrequency(8000)
+                ffmpegCommand
+                    .audioBitrate('12.2k')
+                    .audioChannels(1)
+                    .audioFrequency(8000);
+            } else if (targetFormat === 'opus') {
+                // OPUS格式特定配置
+                ffmpegCommand
+                    .audioBitrate('16k')
+                    .audioChannels(1)
+                    .audioFrequency(16000)
+                    .outputOptions('-vbr on'); // 启用可变比特率
+            }
+            
+            ffmpegCommand
                 .on('end', () => {
                     try {
                         // 读取转换后的文件
