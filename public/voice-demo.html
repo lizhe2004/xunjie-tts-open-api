@@ -141,6 +141,8 @@
         let filteredVoices = [];
         let currentCategory = 'all';
         let currentlyPlaying = null;
+        // 存储每个语音的语速设置
+        const voiceSpeeds = {};
 
         // 初始化函数
         async function init() {
@@ -151,11 +153,18 @@
                 generateVoiceCategories();
                 // 初始显示音色卡片
                 filteredVoices = voiceData;
+                
                 renderVoiceCards();
                 // 添加搜索事件监听
-                document.getElementById('search-input').addEventListener('input', handleSearch);
+                const searchInput = document.getElementById('search-input');
+                if (searchInput) {
+                    searchInput.addEventListener('input', handleSearch);
+                }
                 // 添加加载更多事件监听
-                document.getElementById('load-more-btn').addEventListener('click', loadMoreCards);
+                const loadMoreBtn = document.getElementById('load-more-btn');
+                if (loadMoreBtn) {
+                    loadMoreBtn.addEventListener('click', loadMoreCards);
+                }
             } catch (error) {
                 console.error('初始化失败:', error);
                 showErrorMessage('加载音色数据失败，请刷新页面重试');
@@ -263,7 +272,8 @@
                 const matchesSearch = !searchTerm || 
                     voice.names.toLowerCase().includes(searchTerm) ||
                     voice.character.toLowerCase().includes(searchTerm) ||
-                    voice.scene_tag.toLowerCase().includes(searchTerm);
+                    voice.scene_tag.toLowerCase().includes(searchTerm) ||
+                    voice.en_name.toLowerCase().includes(searchTerm);
                 
                 // 分类过滤
                 const matchesCategory = currentCategory === 'all' || voice.category === currentCategory;
@@ -292,7 +302,7 @@
                 return;
             }
             
-            voicesToRender.forEach(voice => {
+            voicesToRender.forEach(voice => {// 组装音色卡片
                 const card = createVoiceCard(voice);
                 container.appendChild(card);
             });
@@ -320,6 +330,11 @@
 
         // 创建音色卡片
         function createVoiceCard(voice) {
+            // 初始化该音色的语速设置
+            if (!voiceSpeeds[voice.id]) {
+                voiceSpeeds[voice.id] = 1.0;
+            }
+            
             const col = document.createElement('div');
             col.className = 'col-md-4 col-lg-3 mb-4';
             
@@ -340,10 +355,15 @@
                 this.src = 'https://via.placeholder.com/80';
             };
             
-            // 名称
+            // 音色名称
             const name = document.createElement('h5');
             name.className = 'card-title';
             name.textContent = voice.names;
+            
+            // 英文名称
+            const enName = document.createElement('p');
+            enName.className = 'card-text text-muted text-sm';
+            enName.textContent = voice.en_name;
             
             // 特征
             const character = document.createElement('p');
@@ -371,6 +391,60 @@
                     }
                 });
             }
+            
+            // 语速控制
+            const speedControlContainer = document.createElement('div');
+            speedControlContainer.className = 'mt-3';
+            
+            // 创建所有元素而不是使用innerHTML
+            const rowDiv = document.createElement('div');
+            rowDiv.className = 'row align-items-center';
+            
+            const colDiv = document.createElement('div');
+            colDiv.className = 'col-12';
+            
+            const flexDiv = document.createElement('div');
+            flexDiv.className = 'd-flex align-items-center';
+            
+            const label = document.createElement('label');
+            label.className = 'form-label me-2 mb-0 text-sm';
+            label.htmlFor = `speed-control-${voice.id}`;
+            label.textContent = '语速:';
+            
+            const speedControl = document.createElement('input');
+            speedControl.type = 'range';
+            speedControl.id = `speed-control-${voice.id}`;
+            speedControl.className = 'form-range flex-grow-1 mx-2';
+            speedControl.min = '0.25';
+            speedControl.max = '4.0';
+            speedControl.step = '0.1';
+            speedControl.value = voiceSpeeds[voice.id];
+            
+            const speedValue = document.createElement('span');
+            speedValue.id = `speed-value-${voice.id}`;
+            speedValue.className = 'badge bg-primary text-sm';
+            speedValue.textContent = `${voiceSpeeds[voice.id].toFixed(1)}x`;
+            
+            // 组装元素
+            flexDiv.appendChild(label);
+            flexDiv.appendChild(speedControl);
+            flexDiv.appendChild(speedValue);
+            colDiv.appendChild(flexDiv);
+            rowDiv.appendChild(colDiv);
+            speedControlContainer.appendChild(rowDiv);
+            
+            // 添加语速控制事件监听
+            speedControl.addEventListener('input', function() {
+                const speed = parseFloat(this.value);
+                voiceSpeeds[voice.id] = speed;
+                speedValue.textContent = `${speed.toFixed(1)}x`;
+                
+                // 更新音频播放器的src，强制重新生成语音
+                const audioPlayer = document.querySelector(`audio[data-voice-id="${voice.id}"]`);
+                if (audioPlayer && audioPlayer.src) {
+                    audioPlayer.src = ''; // 清空现有音频源
+                }
+            });
             
             // 播放图标
             const playIcon = document.createElement('div');
@@ -400,9 +474,11 @@
             // 组装卡片
             cardBody.appendChild(avatar);
             cardBody.appendChild(name);
+            cardBody.appendChild(enName);
             cardBody.appendChild(character);
             cardBody.appendChild(sceneTag);
             cardBody.appendChild(emotionsContainer);
+            cardBody.appendChild(speedControlContainer);
             cardBody.appendChild(playIcon);
             cardBody.appendChild(audioPlayer);
             cardBody.appendChild(loadingIndicator);
@@ -445,16 +521,15 @@
                 playIcon.style.display = 'none';
                 if (loadingIndicator) loadingIndicator.classList.add('active');
                 
-                // 如果还没有音频源，则生成
-                if (!audioPlayer.src) {
-                    const sampleText = '欢迎使用语音合成服务，这是一段测试语音，您可以在下方听到我的声音特点。';
-                    const voiceId = voice.en_name;
-                    
-                    // 调用TTS API生成音频
-                    const audioUrl = await generateTTSAudio(sampleText, voiceId);
-                    audioPlayer.src = audioUrl;
-                    audioPlayer.style.display = 'block';
-                }
+                // 每次播放都生成新的音频（因为语速可能已更改）
+                const sampleText = '欢迎使用语音合成服务，这是一段测试语音，您可以在下方听到我的声音特点。';
+                const voiceId = voice.en_name;
+                const speed = voiceSpeeds[voice.id] || 1.0;
+                
+                // 调用TTS API生成音频
+                const audioUrl = await generateTTSAudio(sampleText, voiceId, speed);
+                audioPlayer.src = audioUrl;
+                audioPlayer.style.display = 'block';
                 
                 // 播放音频
                 audioPlayer.play();
@@ -494,13 +569,13 @@
         }
 
         // 生成TTS音频
-        async function generateTTSAudio(text, voiceId) {
+        async function generateTTSAudio(text, voiceId, speed = 1.0) {
             try {
                 // 使用Base64编码避免URL长度限制
                 const encodedText = btoa(encodeURIComponent(text));
                 // 创建一个临时URL用于演示
                 // 在实际应用中，这里应该调用TTS API
-                return `/api/generate-tts?text=${encodedText}&voice=${voiceId}`;
+                return `/api/generate-tts?text=${encodedText}&voice=${voiceId}&speed=${speed}`;
             } catch (error) {
                 console.error('生成TTS音频失败:', error);
                 throw error;
