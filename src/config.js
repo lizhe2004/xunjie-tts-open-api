@@ -67,13 +67,13 @@ const voiceMapping = {
     'fable': process.env.VOICE_FABLE || 'voice3',
     'onyx': process.env.VOICE_ONYX || 'voice4',
     'nova': process.env.VOICE_NOVA || 'voice5',
-    'shimmer': process.env.VOICE_SHIMMER || 'voice6'
-    'ash': process.env.VOICE_ASH || 'voice6'
-     'ballad': process.env.VOICE_BALLAD || 'voice6'
-    'coral': process.env.VOICE_CORAL || 'voice6'
-    'sage': process.env.VOICE_SAGE || 'voice6'
-    'verse': process.env.VOICE_VERSE || 'voice6'
-    'marin': process.env.VOICE_MARIN || 'voice6'
+    'shimmer': process.env.VOICE_SHIMMER || 'voice6',
+    'ash': process.env.VOICE_ASH || 'voice6',
+     'ballad': process.env.VOICE_BALLAD || 'voice6',
+    'coral': process.env.VOICE_CORAL || 'voice6',
+    'sage': process.env.VOICE_SAGE || 'voice6',
+    'verse': process.env.VOICE_VERSE || 'voice6',
+    'marin': process.env.VOICE_MARIN || 'voice6',
     'cedar': process.env.VOICE_SCEDAR || 'voice6'
 };
 
