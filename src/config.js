@@ -26,8 +26,8 @@ const defaultConfig = {
             token: process.env.HUDUNSOFT_TOKEN || 'e97be36a465f47e18bd2853a985374d4',
             bgId: process.env.HUDUNSOFT_BG_ID || '0',
             bgVolume: process.env.HUDUNSOFT_BG_VOLUME || '5',
-            volume: process.env.HUDUNSOFT_VOLUME || '4',
-            pitchRate: process.env.HUDUNSOFT_PITCH_RATE || '4',
+            volume: process.env.HUDUNSOFT_VOLUME || '5',
+            pitchRate: process.env.HUDUNSOFT_PITCH_RATE || '5',
             bgUrl: process.env.HUDUNSOFT_BG_URL || ''
         }
     },
