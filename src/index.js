@@ -170,17 +170,17 @@ async function generateTTS({ text, voice, speed = 1.0, emotion, format = 'mp3', 
         
         // 将speed转换为speech_rate (0.25-4.0 映射到 1-10)
         
-        var speechRate = Math.round((parseFloat(speed) - 1) / 3 * 6) + 4;
+        var speechRate = Math.round((parseFloat(speed) - 1) / 3 * 6) + 5;
         if (speed<=0.3)
-            speechRate=1
-        else if ( speed<0.5)
             speechRate=2
-        else  if ( speed<0.8)
+        else if ( speed<0.5)
             speechRate=3
+        else  if ( speed<0.8)
+            speechRate=4
         else if (speed>=0.8 && speed<1.2)
-            speechRate = 4;
-      else if (speed>=1.2 && speed<1.5)
             speechRate = 5;
+      else if (speed>=1.2 && speed<1.5)
+            speechRate = 6;
 
         // 准备表单数据
         const formData = new URLSearchParams();
